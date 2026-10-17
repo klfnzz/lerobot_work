@@ -1,3 +1,5 @@
+> 本工作区以 LeRobot 0.6.1 为主，Piper 已内置。安装、相机/CAN 配置与推理示例见 [Piper 使用说明](docs/PIPER.md)。
+
 <p align="center">
   <img alt="LeRobot, Hugging Face Robotics Library" src="./media/readme/lerobot-logo-thumbnail.png" width="100%">
 </p>

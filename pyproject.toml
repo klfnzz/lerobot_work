@@ -93,6 +93,11 @@ dependencies = [
 # Optional dependencies
 [project.optional-dependencies]
 
+piper = [
+    "pyAgxArm @ git+https://github.com/agilexrobotics/pyAgxArm.git@57a95a8",
+    "lerobot[intelrealsense]",
+]
+
 # ── Feature-scoped extras ──────────────────────────────────
 dataset = [
     "datasets>=4.8.0,<5.0.0",

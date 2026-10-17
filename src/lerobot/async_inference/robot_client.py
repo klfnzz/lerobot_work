@@ -56,6 +56,7 @@ from lerobot.robots import (  # noqa: F401
     koch_follower,
     make_robot_from_config,
     omx_follower,
+    piper_follower,
     so_follower,
 )
 from lerobot.transport import (

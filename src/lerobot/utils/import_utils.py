@@ -117,6 +117,7 @@ _diffusers_available = is_package_available("diffusers")
 _torchdiffeq_available = is_package_available("torchdiffeq")
 
 # Hardware SDKs
+_pyagxarm_available = is_package_available("pyAgxArm")
 _serial_available = is_package_available("pyserial", import_name="serial")
 _deepdiff_available = is_package_available("deepdiff")
 _dynamixel_sdk_available = is_package_available("dynamixel-sdk", import_name="dynamixel_sdk")
