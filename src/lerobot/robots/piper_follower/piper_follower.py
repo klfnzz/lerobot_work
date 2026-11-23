@@ -1,3 +1,4 @@
+import math
 import time
 from typing import Any
 
@@ -14,6 +15,9 @@ from .config_piper_follower import PiperFollowerConfig
 class PiperFollower(Robot):
     config_class = PiperFollowerConfig
     name = "piper_follower"
+    # move_j and move_gripper_m use absolute position targets, so refreshing the
+    # complete applied command retains the target while remote inference runs.
+    supports_position_hold = True
 
     def __init__(self, config: PiperFollowerConfig):
         super().__init__(config)
@@ -27,7 +31,12 @@ class PiperFollower(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple[int, int, int]]:
-        return {name: (camera.height, camera.width, 3) for name, camera in self.cameras.items()}
+        features = {}
+        for name, camera in self.cameras.items():
+            if camera.height is None or camera.width is None:
+                raise ValueError(f"Piper camera {name!r} requires explicit height and width.")
+            features[name] = (camera.height, camera.width, 3)
+        return features
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -83,8 +92,12 @@ class PiperFollower(Robot):
 
     @check_if_not_connected
     def send_action(self, action: RobotAction) -> RobotAction:
-        self.bus.write([float(action[f"{motor}.pos"]) for motor in PIPER_MOTOR_NAMES])
-        return action
+        applied_action = {f"{motor}.pos": float(action[f"{motor}.pos"]) for motor in PIPER_MOTOR_NAMES}
+        if not all(math.isfinite(value) for value in applied_action.values()):
+            raise ValueError("Piper position targets must be finite.")
+        applied_action["gripper.pos"] = max(0.0, applied_action["gripper.pos"])
+        self.bus.write(list(applied_action.values()))
+        return applied_action
 
     @check_if_not_connected
     def disconnect(self) -> None:

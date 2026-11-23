@@ -5,6 +5,8 @@ import pytest
 from lerobot.utils.constants import OBS_STR
 from lerobot.utils.feature_utils import hw_to_dataset_features
 
+pytestmark = pytest.mark.hardware
+
 
 @pytest.mark.parametrize("module", ["lerobot_find_joint_limits", "lerobot_setup_motors"])
 def test_unsupported_hardware_tools_do_not_advertise_piper(module):
@@ -45,6 +47,7 @@ def test_native_factories_preserve_piper_configuration(monkeypatch, tmp_path):
     assert [camera.serial_number_or_name for camera in follower_config.cameras.values()] == [
         "230322272075",
         "233622078698",
+        "109122072082",
     ]
     assert all(
         (camera.width, camera.height, camera.fps) == (640, 480, 30)
@@ -143,12 +146,12 @@ def test_piper_camera_features_keep_raw_camera_keys():
     assert set(features) == {"observation.images.pikaGripperDepthCamera"}
 
 
-def test_piper_follower_default_cameras_match_policy_feature_keys():
+def test_piper_follower_preserves_current_three_camera_configuration():
     from lerobot.robots.piper_follower import PiperFollowerConfig
 
     config = PiperFollowerConfig()
 
-    assert list(config.cameras) == ["pikaGripperDepthCamera", "sideDepthCamera"]
+    assert list(config.cameras) == ["pikaGripperDepthCamera", "highDepthCamera", "sideDepthCamera"]
 
 
 def test_enable_state_returns_when_joint_status_matches_request():
@@ -354,14 +357,46 @@ def test_leader_features_use_fixed_motor_order_when_config_is_unordered():
     ]
 
 
-def test_piper_follower_is_supported_by_async_client():
-    """Piper must pass the async client robot-type gate without opening hardware."""
-    from lerobot.async_inference.constants import SUPPORTED_ROBOTS
+def test_piper_remote_hold_retains_applied_targets_including_clipped_gripper():
+    """Remote waiting must resend the applied command, including the gripper."""
+    from lerobot.robots.piper_follower import PiperFollower
+    from lerobot.rollout.robot_wrapper import ThreadSafeRobot
 
-    assert "piper_follower" in SUPPORTED_ROBOTS
+    targets = []
+    follower = object.__new__(PiperFollower)
+    follower.bus = SimpleNamespace(is_connected=True, write=lambda target: targets.append(target))
+    follower.cameras = {}
+    wrapper = ThreadSafeRobot(follower)
+    wrapper.configure_hold()
+    action = {key: float(index) for index, key in enumerate(follower.action_features)}
+    action["gripper.pos"] = -0.01
+
+    applied = wrapper.send_action(action)
+    wrapper.hold()
+
+    assert applied["gripper.pos"] == 0.0
+    assert action["gripper.pos"] == -0.01
+    assert targets == [[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 0.0]] * 2
 
 
-def test_piper_camera_features_build_async_observation_without_double_prefix():
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_piper_rejects_nonfinite_targets_before_sending(value):
+    from lerobot.robots.piper_follower import PiperFollower
+
+    targets = []
+    follower = object.__new__(PiperFollower)
+    follower.bus = SimpleNamespace(is_connected=True, write=lambda target: targets.append(target))
+    follower.cameras = {}
+    action = dict.fromkeys(follower.action_features, 0.0)
+    action["gripper.pos"] = value
+
+    with pytest.raises(ValueError, match="finite"):
+        follower.send_action(action)
+
+    assert targets == []
+
+
+def test_piper_camera_features_build_remote_observation_without_double_prefix():
     """Piper camera keys must match `get_observation` values before dataset conversion."""
     from lerobot.robots.piper_follower.piper_follower import PiperFollower
     from lerobot.utils.constants import OBS_STR
@@ -380,25 +415,17 @@ def test_piper_camera_features_build_async_observation_without_double_prefix():
 
 def test_piper_action_tensor_maps_to_joint_order_without_hardware():
     """The remote action vector must preserve Piper's expected joint order."""
-    pytest.importorskip("grpc")
     import torch
 
-    from lerobot.async_inference.robot_client import RobotClient
+    from lerobot.processor import PolicyActionToRobotActionProcessorStep
+    from lerobot.robots.piper_follower import PiperFollower
 
-    client = object.__new__(RobotClient)
-    client.robot = SimpleNamespace(
-        action_features={
-            "joint_1.pos": float,
-            "joint_2.pos": float,
-            "joint_3.pos": float,
-            "joint_4.pos": float,
-            "joint_5.pos": float,
-            "joint_6.pos": float,
-            "gripper.pos": float,
-        }
+    follower = object.__new__(PiperFollower)
+    processor = PolicyActionToRobotActionProcessorStep(
+        motor_names=[key.removesuffix(".pos") for key in follower.action_features]
     )
 
-    assert client._action_tensor_to_action_dict(torch.arange(7, dtype=torch.float32)) == {
+    assert processor.action(torch.arange(7, dtype=torch.float32)) == {
         "joint_1.pos": 0.0,
         "joint_2.pos": 1.0,
         "joint_3.pos": 2.0,

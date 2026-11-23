@@ -156,11 +156,12 @@ nautilus/*.yaml
 sbatch*.sh
 
 ### Miscellaneous ###
-# W&B
-wandb/
+# Trackio artifact downloads
+.trackio/
 
 # Dev scripts
 .dev/
+.work/
 
 # Data folders
 data/

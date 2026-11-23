@@ -1,0 +1,38 @@
+# Existing 10 Hz Pi0.5 setup: gripper RGB + original side RGB camera.
+deployment: piper-pi05-10hz
+model:
+  repo_or_path: outputs/models/piper-pi05-10hz
+  device: cuda
+  compile_model: false
+execution:
+  supported_modes: [chunk]
+  action_fps: 10.0
+  n_action_steps: 50
+  warmup_calls: 2
+zenoh:
+  mode: peer
+  listen_endpoints: [tcp/127.0.0.1:7447]
+semantics: piper-radians-gripper-metres-v1
+robot_type: piper_follower
+features:
+  - name: observation.state
+    shape: [7]
+    dtype: float32
+    names: [joint_1.pos, joint_2.pos, joint_3.pos, joint_4.pos, joint_5.pos, joint_6.pos, gripper.pos]
+    semantics: piper-radians-gripper-metres-v1
+  - name: observation.images.pikaGripperDepthCamera
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-piper-gripper-v1
+  - name: observation.images.sideDepthCamera
+    shape: [480, 640, 3]
+    dtype: uint8
+    kind: rgb
+    semantics: rgb-piper-side-v1
+action_feature:
+  name: action
+  shape: [7]
+  dtype: float32
+  names: [joint_1.pos, joint_2.pos, joint_3.pos, joint_4.pos, joint_5.pos, joint_6.pos, gripper.pos]
+  semantics: piper-radians-gripper-metres-v1

@@ -18,8 +18,11 @@ class PiperFollowerConfig(RobotConfig):
                 "pikaGripperDepthCamera": RealSenseCameraConfig(
                     serial_number_or_name="230322272075", fps=30, width=640, height=480
                 ),
-                "sideDepthCamera": RealSenseCameraConfig(
+                "highDepthCamera": RealSenseCameraConfig(
                     serial_number_or_name="233622078698", fps=30, width=640, height=480
+                ),
+                "sideDepthCamera": RealSenseCameraConfig(
+                    serial_number_or_name="109122072082", fps=30, width=640, height=480
                 ),
             }
         super().__post_init__()

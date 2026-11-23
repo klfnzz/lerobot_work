@@ -41,6 +41,7 @@ from lerobot.robots import (  # noqa: F401
     bi_openarm_follower,
     bi_rebot_b601_follower,
     bi_so_follower,
+    bi_yam_follower,
     hope_jr,
     koch_follower,
     lekiwi,
@@ -50,6 +51,7 @@ from lerobot.robots import (  # noqa: F401
     piper_follower,
     rebot_b601_follower,
     so_follower,
+    yam_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -78,18 +80,26 @@ class CalibrateConfig:
     teleop: TeleoperatorConfig | None = None
     robot: RobotConfig | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if bool(self.teleop) == bool(self.robot):
             raise ValueError("Choose either a teleop or a robot.")
 
-        self.device = self.robot if self.robot else self.teleop
+    @property
+    def device(self) -> RobotConfig | TeleoperatorConfig:
+        """The one device config given on the CLI (`__post_init__` enforces exactly one)."""
+        if self.robot is not None:
+            return self.robot
+        if self.teleop is not None:
+            return self.teleop
+        raise ValueError("Choose either a teleop or a robot.")
 
 
 @draccus.wrap()
-def calibrate(cfg: CalibrateConfig):
+def calibrate(cfg: CalibrateConfig) -> None:
     init_logging()
     logging.info(pformat(asdict(cfg)))
 
+    device: Robot | Teleoperator
     if isinstance(cfg.device, RobotConfig):
         device = make_robot_from_config(cfg.device)
     elif isinstance(cfg.device, TeleoperatorConfig):
