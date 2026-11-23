@@ -765,9 +765,14 @@ class DAggerStrategy(RolloutStrategy):
 
         elif old_phase == DAggerPhase.PAUSED and new_phase == DAggerPhase.CORRECTING:
             logger.info("Entering correction mode - human teleop control")
+            is_clutch = getattr(teleop, "is_clutch_teleop", False) is True
+            if is_clutch and hasattr(teleop, "prepare_engage"):
+                teleop.prepare_engage(prev_action)
+
             if (
                 self.config.smooth_handover
                 and not teleop_supports_feedback(teleop)
+                and not is_clutch
                 and prev_action is not None
             ):
                 logger.info("Smooth handover: sliding follower to teleop position")
@@ -782,6 +787,8 @@ class DAggerStrategy(RolloutStrategy):
                 teleop.disable_torque()
 
         elif old_phase == DAggerPhase.CORRECTING and new_phase == DAggerPhase.PAUSED:
+            if getattr(teleop, "is_clutch_teleop", False) is True and hasattr(teleop, "on_disengage"):
+                teleop.on_disengage()
             if teleop_supports_feedback(teleop):
                 teleop.enable_torque()
 

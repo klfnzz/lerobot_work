@@ -20,9 +20,10 @@ python -c 'import lerobot; print(lerobot.__version__, lerobot.__file__)'
 | --- | --- | --- |
 | ACT / Diffusion 训练 | ACT 训练、Diffusion / PushT | `lerobot-train` |
 | 恢复训练 | 从 checkpoint 续训 | `lerobot-train --config_path=... --resume=true` |
-| 采集、回放 | 遥操作与采集 | `lerobot-teleoperate`、`lerobot-record`、`lerobot-replay` |
+| 采集、回放 | 遥操作与采集、Pika 遥操作与采集 | `lerobot-teleoperate`、`lerobot-record`、`lerobot-replay` |
 | 本地模型推理 | ACT 本地推理、Pi0.5 本地推理 | `lerobot-rollout` |
 | 推理并保存评估 episode | ACT 003000 / 006000 评估段落 | `lerobot-rollout --strategy.type=episodic` |
+| Pika 人机纠偏采集 (DAgger) | Pika + Piper DAgger 人机纠偏采集 | `lerobot-rollout --strategy.type=dagger --teleop.type=pika_leader` |
 | 远程推理 | GPU 服务端、本地 Piper 客户端 | `lerobot-policy-server`、`lerobot-rollout --inference.type=remote` |
 
 本机保留 Python 3.12.14、PyTorch 2.11.0+cu130、torchvision 0.26.0+cu130，
@@ -143,11 +144,33 @@ ssh -N -L 7447:127.0.0.1:7447 manager@172.29.220.198
 三组客户端的 refill_seconds 分别为 1.0、0.67、0.84，使用 aligned 动作队列合并。
 可按实际延迟调整补充阈值；需要混合重叠目标时，用 `inference.blend_*` 参数显式选择关节。
 
+## Pika 遥操与 DAgger 人机纠偏采集
+
+Pika 传感器（Vive 定位器 + 串口夹爪/按键）运行在 ROS 2 Humble（Python 3.10，`activate_pika.bash`）环境中，
+而 `lerobot_piper` 运行在 Python 3.12 环境中。项目通过本地低延迟 TCP IK 桥接服务将两者解耦：
+
+- **ROS 2 端桥接服务**（`examples/piper/pika_teleop_bridge.py`，由 `examples/piper/start_pika_teleop_bridge.bash` 一键拉起）：
+  只启动 `pika_single_locator_node`、`serial_gripper_imu`（默认 `/dev/ttyUSB50`）与 Pinocchio+CasADi IK 服务（复用 `piper_with_gripper_description.urdf`，`tool_xyz=[0, 0, 0.13]`、`handle_rpy=[0, 1.57, 0]`、`gripper_max_range=0.07`），**不触碰 `can0` 与 RealSense 相机**。
+- **LeRobot 端遥操器**（`--teleop.type=pika_leader`，`src/lerobot/teleoperators/pika_leader`）：
+  直接输出 7 维关节目标（`joint_1.pos … joint_6.pos, gripper.pos`），声明 `is_clutch_teleop = True`。在启动、DAgger 从 `PAUSED` 进入 `CORRECTING`、按 Pika 手柄按键重连离合、或 Vive 短暂丢帧恢复时，均自动以从臂当前真实关节角做零跳变重锚定，不会拉动从臂乱跳。
+
+启动顺序（两个本地终端）：
+
+1. 终端 1（Pika ROS 2 桥接）：
+   ```bash
+   cd /home/qwe/lerobot/lerobot_piper
+   bash examples/piper/start_pika_teleop_bridge.bash
+   ```
+   若传感器节点已在其他终端启动，改用 `bash examples/piper/start_pika_teleop_bridge.bash --bridge-only`。
+2. 终端 2（LeRobot）：复制 [command.sh](../command.sh) 中“环境”段落后，执行“Pika 遥操作与采集”或“Pika + Piper DAgger 人机纠偏采集”中的命令。
+   - **DAgger 流程**：策略自主运行 → 发现异常苗头按 `Space` 暂停 → 按 `Tab` 立即以当前机械臂姿态锚定接管并录制纠偏（期间可按 Pika 手柄按键松开/重锚空间离合）→ 再按 `Tab` 保存本段纠偏 episode → 按 `Space` 交还策略继续运行 → `ESC` 结束保存。
+   - 如需解放双手，可配合 USB 脚踏板 `--strategy.input_device=pedal`。
+
 ## 检查与备份
 
 ```bash
 python ../migration-support/verify_environment.py --profile lerobot --cuda
-uv run --active --no-project pytest -q tests/robots/test_piper.py tests/robots/test_piper_checkpoint.py
+uv run --active --no-project pytest -q tests/robots/test_piper.py tests/robots/test_piper_checkpoint.py tests/robots/test_pika_leader.py
 ```
 
 改名前的文件与环境清单位置见 `../.upgrade-backups/LATEST_RENAME`。

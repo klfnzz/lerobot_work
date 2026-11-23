@@ -167,10 +167,11 @@ class EpisodicStrategy(RolloutStrategy):
                             # position so the operator takes over without fighting the arm.
                             # For non-actuated teleops: slide the follower to the teleop's current
                             # pose instead, since the leader cannot be driven.
-                            # Disabled entirely with --strategy.smooth_handover=false (useful for
-                            # clutch-style teleops that re-reference at the current robot pose on
-                            # engage).
-                            if self.config.smooth_handover:
+                            # Clutch-style teleops re-reference at the current robot pose on engage.
+                            is_clutch = getattr(teleop, "is_clutch_teleop", False) is True
+                            if is_clutch and hasattr(teleop, "prepare_engage"):
+                                teleop.prepare_engage()
+                            if self.config.smooth_handover and not is_clutch:
                                 obs = robot.get_observation()
                                 current_pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
                                 if (
@@ -191,17 +192,25 @@ class EpisodicStrategy(RolloutStrategy):
                             # No teleop: return the robot to its startup position.
                             self.return_to_initial_position(hw=ctx.hardware, duration_s=1)
 
-                        self._reset_loop(
-                            ctx=ctx,
-                            robot=robot,
-                            teleop=teleop,
-                            events=events,
-                            fps=fps,
-                            control_time_s=reset_time_s,
-                            display_data=cfg.display_data,
-                            display_mode=cfg.display_mode,
-                            display_compressed=display_compressed,
-                        )
+                        try:
+                            self._reset_loop(
+                                ctx=ctx,
+                                robot=robot,
+                                teleop=teleop,
+                                events=events,
+                                fps=fps,
+                                control_time_s=reset_time_s,
+                                display_data=cfg.display_data,
+                                display_mode=cfg.display_mode,
+                                display_compressed=display_compressed,
+                            )
+                        finally:
+                            if (
+                                teleop is not None
+                                and getattr(teleop, "is_clutch_teleop", False) is True
+                                and hasattr(teleop, "on_disengage")
+                            ):
+                                teleop.on_disengage()
 
                     if events["rerecord_episode"]:
                         log_say("Re-record episode", play_sounds)

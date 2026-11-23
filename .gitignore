@@ -165,6 +165,7 @@ sbatch*.sh
 
 # Data folders
 data/
+/datasets/
 outputs/
 
 # Translations

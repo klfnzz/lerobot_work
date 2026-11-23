@@ -4,7 +4,7 @@ from typing import Any
 
 from lerobot.cameras import make_cameras_from_configs
 from lerobot.lerobot_types import RobotAction, RobotObservation
-from lerobot.motors.piper import PiperMotorsBus
+from lerobot.motors.piper import PiperMotorsBus, record_piper_state
 from lerobot.motors.piper.config_piper import PIPER_MOTOR_NAMES
 from lerobot.robots.robot import Robot
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
@@ -85,7 +85,10 @@ class PiperFollower(Robot):
 
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
-        observation: dict[str, Any] = {f"{joint}.pos": value for joint, value in self.bus.read().items()}
+        raw_state = self.bus.read()
+        can_name = getattr(getattr(getattr(self, "config", None), "motors", None), "can_name", None)
+        record_piper_state(can_name, raw_state)
+        observation: dict[str, Any] = {f"{joint}.pos": value for joint, value in raw_state.items()}
         for name, camera in self.cameras.items():
             observation[name] = camera.async_read()
         return observation

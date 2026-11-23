@@ -1,12 +1,45 @@
+import threading
 import time
 from typing import TYPE_CHECKING, Any
 
 from lerobot.utils.import_utils import _pyagxarm_available, require_package
 
-from .config_piper import PiperMotorsBusConfig
+from .config_piper import PIPER_MOTOR_NAMES, PiperMotorsBusConfig
 
 if TYPE_CHECKING or _pyagxarm_available:
     from pyAgxArm import AgxArmFactory, create_agx_arm_config
+
+_LATEST_PIPER_STATES: dict[str, tuple[float, dict[str, float]]] = {}
+_LATEST_PIPER_STATES_LOCK = threading.Lock()
+
+
+def record_piper_state(can_name: str | None, state: dict[str, float]) -> None:
+    """Record the latest joint/gripper feedback for a Piper CAN channel in-process."""
+    if not can_name:
+        return
+    snapshot = {name: float(state[name]) for name in PIPER_MOTOR_NAMES if name in state}
+    if len(snapshot) != len(PIPER_MOTOR_NAMES):
+        return
+    with _LATEST_PIPER_STATES_LOCK:
+        _LATEST_PIPER_STATES[can_name] = (time.monotonic(), snapshot)
+
+
+def get_latest_piper_state(can_name: str) -> tuple[float, dict[str, float]] | None:
+    """Return ``(monotonic_timestamp, state_dict)`` for ``can_name``, or ``None``."""
+    with _LATEST_PIPER_STATES_LOCK:
+        entry = _LATEST_PIPER_STATES.get(can_name)
+        if entry is None:
+            return None
+        ts, state = entry
+        return ts, state.copy()
+
+
+def clear_piper_state(can_name: str | None) -> None:
+    """Remove cached state when a Piper bus disconnects."""
+    if not can_name:
+        return
+    with _LATEST_PIPER_STATES_LOCK:
+        _LATEST_PIPER_STATES.pop(can_name, None)
 
 
 class PiperMotorsBus:
@@ -71,10 +104,15 @@ class PiperMotorsBus:
 
         self._is_connected = False
         self._is_calibrated = False
+        clear_piper_state(getattr(getattr(self, "config", None), "can_name", None))
         return disabled
 
     def apply_calibration(self) -> None:
         self.write(self.init_joint_position)
+        record_piper_state(
+            getattr(getattr(self, "config", None), "can_name", None),
+            dict(zip(PIPER_MOTOR_NAMES, self.init_joint_position, strict=True)),
+        )
         self._is_calibrated = True
 
     def write(self, target_joint: list[float]) -> None:
@@ -96,6 +134,7 @@ class PiperMotorsBus:
         gripper_msg: Any = self.gripper.get_gripper_status()
         if gripper_msg is not None and getattr(gripper_msg.msg, "mode", "width") == "width":
             state["gripper"] = float(gripper_msg.msg.value)
+        record_piper_state(getattr(getattr(self, "config", None), "can_name", None), state)
         return state
 
     def safe_disconnect(self) -> None:

@@ -106,6 +106,36 @@ lerobot-replay \
   --dataset.episode=0
 
 
+############################ Pika 遥操作与采集 ############################
+# 终端 1：在 pika (ROS 2 Humble) 环境中启动 Vive 定位、Pika 夹爪串口节点与 IK 桥接服务
+# （不占用 can0 与 RealSense 相机；如果传感器节点已在其他终端启动，追加 --bridge-only）
+bash examples/piper/start_pika_teleop_bridge.bash
+
+# 终端 2：先执行上面的“环境”段落，再使用 --teleop.type=pika_leader 遥操或录制
+# 操作中按一次 Pika 手柄按键可松开离合调整手部位置，再按一次重新锚定当前机械臂位姿继续控制
+lerobot-teleoperate \
+  --robot.type=piper_follower \
+  --robot.id=right \
+  --robot.motors.can_name=can0 \
+  --teleop.type=pika_leader \
+  --teleop.id=pika \
+  --fps=30
+
+lerobot-record \
+  --robot.type=piper_follower \
+  --robot.id=right \
+  --robot.motors.can_name=can0 \
+  --teleop.type=pika_leader \
+  --teleop.id=pika \
+  --dataset.repo_id=${HF_USER}/piper_pick_and_place \
+  --dataset.root=outputs/datasets/piper_pick_and_place \
+  --dataset.single_task="pick up the object and place it in the container" \
+  --dataset.fps=30 \
+  --dataset.episode_time_s=30 \
+  --dataset.num_episodes=50 \
+  --dataset.push_to_hub=false
+
+
 ############################ 下载训练好的模型 ############################
 hf download lazycc/act_pick_and_place \
   --repo-type model \
@@ -308,3 +338,111 @@ lerobot-rollout \
   --robot.id=right \
   --task="帮插头放入插座中" \
   --fps=30
+
+
+############################ Pika + Piper DAgger 人机纠偏采集 ############################
+# 前置：终端 1 保持运行 `bash examples/piper/start_pika_teleop_bridge.bash`
+# 按键约定：
+#   Space : 暂停策略 / 恢复策略自主运行
+#   Tab   : （暂停态下）开始人工纠偏录帧（自动以机械臂当前姿态零跳变锚定 Pika）/ 再次按 Tab 结束并保存该条纠偏 episode
+#   Pika手柄按键 : 纠偏过程中随时松开/重锚空间离合（移动手部位置而机械臂不动）
+#   ESC   : 结束采集并保存数据集
+# 注意：dataset.repo_id 仓库名必须以 rollout_ 开头；dataset.fps 必须与 --fps 相等。
+# 如需同时录制自主段与纠偏段，追加 --strategy.record_autonomous=true。
+
+# 1) 本地 Pi0.5 + RTC + Pika DAgger（双相机 / 10 Hz）
+lerobot-rollout \
+  --strategy.type=dagger \
+  --strategy.num_episodes=30 \
+  --inference.type=rtc \
+  --inference.rtc.enabled=true \
+  --inference.rtc.mode=guided \
+  --inference.rtc.execution_horizon=10 \
+  --inference.rtc.max_guidance_weight=10 \
+  --inference.queue_threshold=10 \
+  --robot.type=piper_follower \
+  --robot.id=right \
+  --robot.motors.can_name=can0 \
+  --robot.cameras="$PIPER_MODEL_CAMERAS" \
+  --teleop.type=pika_leader \
+  --teleop.id=pika \
+  --policy.path=outputs/models/lazycc/pi05_pick_and_place_piper \
+  --policy.compile_model=false \
+  --dataset.repo_id=${HF_USER}/rollout_piper_dagger_pi05 \
+  --dataset.no_stamp=true \
+  --dataset.root=outputs/datasets/rollout_piper_dagger_pi05 \
+  --dataset.single_task="pick up the object and place it in the container" \
+  --dataset.fps=10 \
+  --dataset.push_to_hub=false \
+  --dataset.streaming_encoding=true \
+  --task="pick up the object and place it in the container" \
+  --fps=10 \
+  --device=cuda
+
+# 2) 本地 ACT + Pika DAgger（双相机 / 10 Hz）
+lerobot-rollout \
+  --strategy.type=dagger \
+  --strategy.num_episodes=30 \
+  --inference.type=sync \
+  --robot.type=piper_follower \
+  --robot.id=right \
+  --robot.motors.can_name=can0 \
+  --robot.cameras="$PIPER_MODEL_CAMERAS" \
+  --teleop.type=pika_leader \
+  --teleop.id=pika \
+  --policy.path=outputs/models/act_pick_and_place/checkpoints/006000/pretrained_model \
+  --policy.n_action_steps=30 \
+  --dataset.repo_id=${HF_USER}/rollout_piper_dagger_act \
+  --dataset.no_stamp=true \
+  --dataset.root=outputs/datasets/rollout_piper_dagger_act \
+  --dataset.single_task="Pick up the object" \
+  --dataset.fps=10 \
+  --dataset.push_to_hub=false \
+  --dataset.streaming_encoding=true \
+  --task="Pick up the object" \
+  --fps=10 \
+  --device=cuda
+
+# 3) 远程推理 Pi0.5 (30 Hz 三相机) + 本地 Pika DAgger
+lerobot-rollout \
+  --strategy.type=dagger \
+  --strategy.num_episodes=30 \
+  --inference.type=remote \
+  --inference.endpoint=tcp/127.0.0.1:7447 \
+  --inference.deployment=piper-pi05 \
+  --inference.mode=chunk \
+  --inference.semantics=piper-radians-gripper-metres-v1 \
+  --inference.chunk_merge=aligned \
+  --inference.refill_seconds=0.67 \
+  --robot.type=piper_follower \
+  --robot.id=right \
+  --robot.motors.can_name=can0 \
+  --teleop.type=pika_leader \
+  --teleop.id=pika \
+  --dataset.repo_id=${HF_USER}/rollout_piper_dagger_remote \
+  --dataset.no_stamp=true \
+  --dataset.root=outputs/datasets/rollout_piper_dagger_remote \
+  --dataset.single_task="从桌子边缘的盒子里随机抓取方块，放到中间盒子上；再从中间盒子里随机抓取方块，放到边缘盒子上" \
+  --dataset.fps=30 \
+  --dataset.push_to_hub=false \
+  --dataset.streaming_encoding=true \
+  --task="从桌子边缘的盒子里随机抓取方块，放到中间盒子上；再从中间盒子里随机抓取方块，放到边缘盒子上" \
+  --fps=30
+
+# 4) DAgger 数据后处理（移除 intervention 列并与原数据集 merge 后微调）
+lerobot-edit-dataset \
+  --repo_id=${HF_USER}/rollout_piper_dagger_pi05 \
+  --root=outputs/datasets/rollout_piper_dagger_pi05 \
+  --new_repo_id=${HF_USER}/piper_dagger_clean \
+  --new_root=outputs/datasets/piper_dagger_clean \
+  --operation.type=remove_feature \
+  --operation.feature_names="['intervention']" \
+  --push_to_hub=false
+
+lerobot-edit-dataset \
+  --new_repo_id=${HF_USER}/piper_demo_plus_dagger \
+  --new_root=outputs/datasets/piper_demo_plus_dagger \
+  --operation.type=merge \
+  --operation.repo_ids="['${HF_USER}/piper_pick_and_place', '${HF_USER}/piper_dagger_clean']" \
+  --operation.roots="['outputs/datasets/piper_pick_and_place', 'outputs/datasets/piper_dagger_clean']" \
+  --push_to_hub=false
